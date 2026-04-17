@@ -154,11 +154,14 @@ def render_tabs(df, sg, lim, all_vals, usl, lsl, n, chart_type, value_col, subti
     cpk = min(cpu, cpl)
 
     # KPIs
+    sigma_val = lim["sigma_hat"]
+    UCLx_val  = lim["UCLx"]
+    LCLx_val  = lim["LCLx"]
     k1,k2,k3,k4,k5,k6 = st.columns(6)
     k1.metric("Grand Mean X̄",   f"{xbar_bar:.4f}")
-    k2.metric("Est. Std Dev σ̂", f"{lim['sigma_hat']:.4f}")
-    k3.metric("UCL (X̄)",        f"{lim['UCLx']:.4f}")
-    k4.metric("LCL (X̄)",        f"{lim['LCLx']:.4f}")
+    k2.metric("Est. Std Dev σ̂", f"{sigma_val:.4f}")
+    k3.metric("UCL (X̄)",        f"{UCLx_val:.4f}")
+    k4.metric("LCL (X̄)",        f"{LCLx_val:.4f}")
     k5.metric("Cp",              f"{cp:.3f}")
     k6.metric("Cpk",             f"{cpk:.3f}",
               delta="Capable" if cpk>=1.33 else ("Marginal" if cpk>=1.0 else "Not Capable"),
@@ -177,10 +180,11 @@ def render_tabs(df, sg, lim, all_vals, usl, lsl, n, chart_type, value_col, subti
                    P["blue"], "Subgroup Mean", f"Mean {value_col}")
         ax1.set_title("X-bar Chart", fontsize=11, fontweight="bold")
 
+        vl = lim["var_label"]
         draw_chart(ax2, batches, lim["var_vals"],
                    lim["UCLv"], lim["cl_var"], lim["LCLv"], lim["ooc_v"],
-                   lim["var_color"], f"Subgroup {lim['var_label']}", lim["var_label"])
-        ax2.set_title(f"{lim['var_label']} Chart", fontsize=11, fontweight="bold")
+                   lim["var_color"], "Subgroup " + vl, vl)
+        ax2.set_title(vl + " Chart", fontsize=11, fontweight="bold")
         ax2.set_xlabel("Subgroup Number", fontsize=10)
 
         st.pyplot(fig, use_container_width=True)
@@ -190,17 +194,27 @@ def render_tabs(df, sg, lim, all_vals, usl, lsl, n, chart_type, value_col, subti
             st.markdown('<p class="section-header">X-bar Control Limits</p>', unsafe_allow_html=True)
             st.dataframe(pd.DataFrame({
                 "Limit":["UCL","CL","LCL"],
-                "Value":[f"{lim['UCLx']:.4f}", f"{xbar_bar:.4f}", f"{lim['LCLx']:.4f}"]
+                "Value":[f"{UCLx_val:.4f}", f"{xbar_bar:.4f}", f"{LCLx_val:.4f}"]
             }), hide_index=True, use_container_width=True)
-            st.error(f"⚠️ OOC subgroups: {lim['ooc_x']}") if lim["ooc_x"] else st.success("✅ All in control")
+            ooc_x_list = lim["ooc_x"]
+            if ooc_x_list:
+                st.error("OOC subgroups (X-bar): " + str(ooc_x_list))
+            else:
+                st.success("All X-bar subgroups in control")
 
         with col_b:
-            st.markdown(f'<p class="section-header">{lim["var_label"]} Control Limits</p>', unsafe_allow_html=True)
+            var_label_str = lim["var_label"]
+            st.markdown(f'<p class="section-header">{var_label_str} Control Limits</p>', unsafe_allow_html=True)
+            UCLv_val = lim["UCLv"]; cl_var_val = lim["cl_var"]; LCLv_val = lim["LCLv"]
             st.dataframe(pd.DataFrame({
                 "Limit":["UCL","CL","LCL"],
-                "Value":[f"{lim['UCLv']:.4f}", f"{lim['cl_var']:.4f}", f"{lim['LCLv']:.4f}"]
+                "Value":[f"{UCLv_val:.4f}", f"{cl_var_val:.4f}", f"{LCLv_val:.4f}"]
             }), hide_index=True, use_container_width=True)
-            st.error(f"⚠️ OOC subgroups: {lim['ooc_v']}") if lim["ooc_v"] else st.success("✅ All in control")
+            ooc_v_list = lim["ooc_v"]
+            if ooc_v_list:
+                st.error("OOC subgroups (" + var_label_str + "): " + str(ooc_v_list))
+            else:
+                st.success("All " + var_label_str + " subgroups in control")
 
         buf = io.BytesIO()
         fig.savefig(buf, format="png", dpi=150, bbox_inches="tight")
@@ -215,7 +229,7 @@ def render_tabs(df, sg, lim, all_vals, usl, lsl, n, chart_type, value_col, subti
             st.dataframe(pd.DataFrame({
                 "Index":["USL","LSL","X̄","σ̂","Cp","Cpu","Cpl","Cpk"],
                 "Value":[f"{usl:.4f}", f"{lsl:.4f}",
-                         f"{xbar_bar:.4f}", f"{lim['sigma_hat']:.4f}",
+                         f"{xbar_bar:.4f}", f"{sigma_val:.4f}",
                          f"{cp:.3f}", f"{cpu:.3f}", f"{cpl:.3f}", f"{cpk:.3f}"]
             }), hide_index=True, use_container_width=True)
             st.markdown("**Verdict:**")
@@ -238,9 +252,9 @@ def render_tabs(df, sg, lim, all_vals, usl, lsl, n, chart_type, value_col, subti
                     color=P["blue"], alpha=0.5, edgecolor="white",
                     linewidth=0.6, density=True, label="Measurements")
             x_r = np.linspace(all_vals.min()-0.5, all_vals.max()+0.5, 300)
-            pdf = stats.norm.pdf(x_r, xbar_bar, lim["sigma_hat"])
+            pdf = stats.norm.pdf(x_r, xbar_bar, sigma_val)
             ax.plot(x_r, pdf, color=P["indigo"], linewidth=2.2,
-                    label=f"Normal fit  μ={xbar_bar:.3f}, σ={lim['sigma_hat']:.3f}")
+                    label=f"Normal fit  mu={xbar_bar:.3f}, sigma={sigma_val:.3f}")
             ax.axvline(usl, color=P["red"],   linewidth=1.8, linestyle="--", label=f"USL={usl:.3f}")
             ax.axvline(lsl, color=P["red"],   linewidth=1.8, linestyle="--", label=f"LSL={lsl:.3f}")
             ax.axvline(xbar_bar, color=P["amber"], linewidth=1.5, linestyle=":",
@@ -255,8 +269,8 @@ def render_tabs(df, sg, lim, all_vals, usl, lsl, n, chart_type, value_col, subti
             ax.tick_params(colors="#475569", labelsize=9)
             st.pyplot(fig2, use_container_width=True)
 
-            pct_above = (1 - stats.norm.cdf(usl, xbar_bar, lim["sigma_hat"])) * 100
-            pct_below = stats.norm.cdf(lsl, xbar_bar, lim["sigma_hat"]) * 100
+            pct_above = (1 - stats.norm.cdf(usl, xbar_bar, sigma_val)) * 100
+            pct_below = stats.norm.cdf(lsl, xbar_bar, sigma_val) * 100
             dppm = (pct_above + pct_below) * 10000
             d1, d2_, d3 = st.columns(3)
             d1.metric("Est. % Above USL", f"{pct_above:.3f}%")

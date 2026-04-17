@@ -472,19 +472,23 @@ if "Upload" in mode:
             <h3>📂 Upload your dataset to begin</h3>
             <p style="color:#475569; margin:0">
                 Accepted: <strong>CSV</strong> or <strong>Excel (.xlsx / .xls)</strong><br><br>
-                Required columns:<br>
-                • <strong>Subgroup</strong> — integer group ID (1, 2, 3 …)<br>
-                • <strong>Measurement column</strong> — numeric values
+                Your file needs at least one <strong>numeric measurement column</strong>.<br>
+                A <strong>Subgroup</strong> column is optional — you can also let the app split the data automatically.
             </p>
         </div>
         """, unsafe_allow_html=True)
-        st.markdown("#### Example format")
-        ex = pd.DataFrame({
-            "Subgroup":[1,1,1,1,1,2,2,2,2,2],
-            "Value":   [32.1,31.9,32.3,32.0,31.8,32.5,32.2,32.7,32.1,32.4]
+        st.markdown("#### Format with Subgroup column")
+        ex1 = pd.DataFrame({
+            "Subgroup":[1,1,1,2,2,2],
+            "Value":   [0.781,0.779,0.783,0.820,0.818,0.825]
         })
-        st.dataframe(ex, hide_index=True, use_container_width=False)
-        csv_s = ex.to_csv(index=False).encode("utf-8")
+        st.dataframe(ex1, hide_index=True, use_container_width=False)
+        st.markdown("#### Format without Subgroup column (auto-split)")
+        ex2 = pd.DataFrame({
+            "Value":[0.781,0.779,0.783,0.820,0.818,0.825,0.776,0.780,0.778]
+        })
+        st.dataframe(ex2, hide_index=True, use_container_width=False)
+        csv_s = ex1.to_csv(index=False).encode("utf-8")
         st.download_button("⬇️  Download sample_data.csv", csv_s,
                            file_name="sample_data.csv", mime="text/csv")
         st.stop()
@@ -500,22 +504,81 @@ if "Upload" in mode:
 
     # Column mapping in sidebar
     with st.sidebar:
-        default_sg  = next((c for c in all_cols if any(k in c.lower() for k in ["subgroup","batch","group"])), all_cols[0])
-        subgroup_col = st.selectbox("Subgroup column", all_cols, index=all_cols.index(default_sg))
-        remaining    = [c for c in numeric_cols if c != subgroup_col]
-        value_col    = st.selectbox("Measurement column", remaining or numeric_cols)
+        # Detect if there is a subgroup-like column
+        sg_candidates = [c for c in all_cols if any(k in c.lower() for k in ["subgroup","batch","group","lot"])]
+        has_sg_col = len(sg_candidates) > 0
 
-    if subgroup_col == value_col:
-        st.error("❌ Subgroup and Measurement columns must differ."); st.stop()
+        st.markdown("### ⚙️ Column Mapping")
+        grouping_mode = st.radio(
+            "Grouping method",
+            ["Use Subgroup column", "Auto-split by subgroup size"],
+            index=0 if has_sg_col else 1,
+        )
 
-    try:
-        df = raw_df[[subgroup_col, value_col]].copy()
-        df.columns = ["Subgroup","Value"]
-        df["Subgroup"] = df["Subgroup"].astype(int)
-        df["Value"]    = pd.to_numeric(df["Value"], errors="coerce")
-        df.dropna(inplace=True)
-    except Exception as e:
-        st.error(f"❌ {e}"); st.stop()
+        if grouping_mode == "Use Subgroup column":
+            default_sg   = sg_candidates[0] if sg_candidates else all_cols[0]
+            subgroup_col = st.selectbox("Subgroup column", all_cols,
+                                        index=all_cols.index(default_sg))
+            remaining    = [c for c in numeric_cols if c != subgroup_col]
+            value_col    = st.selectbox("Measurement column", remaining or numeric_cols)
+            manual_n     = None
+            tail_action  = None
+        else:
+            subgroup_col = None
+            value_col    = st.selectbox("Measurement column", numeric_cols)
+            total_rows   = len(raw_df.dropna(subset=[value_col]))
+            manual_n     = st.slider(
+                "Subgroup size n",
+                min_value=2, max_value=min(25, total_rows // 2),
+                value=min(5, total_rows // 2),
+                help=f"Total rows: {total_rows}  →  {total_rows // manual_n if False else '...'} subgroups"
+            )
+            n_groups     = total_rows // manual_n
+            remainder    = total_rows % manual_n
+            st.caption(
+                f"Total rows: {total_rows}  →  **{n_groups} subgroups × n={manual_n}**"
+                + (f"  (last {remainder} rows discarded)" if remainder else "")
+            )
+            if remainder > 0:
+                tail_action = st.radio(
+                    "Leftover rows",
+                    ["Discard", "Keep as partial subgroup"],
+                    help=f"{remainder} row(s) don't fit evenly into subgroups of {manual_n}."
+                )
+            else:
+                tail_action = "Discard"
+
+    # ── Build df ──────────────────────────────────────────────────
+    if grouping_mode == "Use Subgroup column":
+        if subgroup_col == value_col:
+            st.error("❌ Subgroup and Measurement columns must differ."); st.stop()
+        try:
+            df = raw_df[[subgroup_col, value_col]].copy()
+            df.columns = ["Subgroup", "Value"]
+            df["Subgroup"] = df["Subgroup"].astype(int)
+            df["Value"]    = pd.to_numeric(df["Value"], errors="coerce")
+            df.dropna(inplace=True)
+        except Exception as e:
+            st.error(f"❌ {e}"); st.stop()
+    else:
+        try:
+            vals = pd.to_numeric(raw_df[value_col], errors="coerce").dropna().reset_index(drop=True)
+        except Exception as e:
+            st.error(f"❌ {e}"); st.stop()
+
+        n_groups  = len(vals) // manual_n
+        remainder = len(vals) % manual_n
+
+        if tail_action == "Discard" or remainder == 0:
+            vals = vals.iloc[:n_groups * manual_n]
+        # else keep all rows, last group will be partial
+
+        groups = []
+        for i, v in enumerate(vals):
+            groups.append(i // manual_n + 1)
+        df = pd.DataFrame({"Subgroup": groups, "Value": vals.values})
+        subgroup_col = "Subgroup (auto)"
+        value_col    = value_col
 
     if df.empty:
         st.error("❌ No valid data after parsing."); st.stop()
@@ -530,7 +593,7 @@ if "Upload" in mode:
     lim       = compute_limits(chart_type, xbar_bar, n, sg)
     actual_ct = lim["chart_type"]
     if actual_ct != chart_type:
-        st.warning(f"⚠️ n={n} is outside R Chart table. Switched to S Chart automatically.")
+        st.warning("n=" + str(n) + " is outside R Chart table. Switched to S Chart automatically.")
 
     st.markdown(
         f"**File:** `{uploaded.name}` &nbsp;|&nbsp; **Chart:** {actual_ct} &nbsp;|&nbsp; "

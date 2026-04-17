@@ -423,8 +423,8 @@ with st.sidebar:
 
     # ── Spec limits (shared) ──
     st.markdown("### 📏 Specification Limits")
-    usl = st.number_input("USL", value=33.0, step=0.1, format="%.3f")
-    lsl = st.number_input("LSL", value=31.0, step=0.1, format="%.3f")
+    usl = st.number_input("USL", value=0.82, step=0.001, format="%.4f")
+    lsl = st.number_input("LSL", value=0.74, step=0.001, format="%.4f")
     st.divider()
 
     # ── Mode-specific controls ──
@@ -436,9 +436,11 @@ with st.sidebar:
     else:
         uploaded = None
         st.markdown("### ⚙️ Process Parameters")
-        sim_mean  = st.slider("Target Mean",            28.0, 36.0, 32.0, 0.1)
-        sim_std   = st.slider("Process Std Dev",         0.05,  2.0,  0.3, 0.05)
-        sim_shift = st.slider("Assignable Cause Shift",  0.0,   3.0,  1.0, 0.1)
+        sim_mean  = st.number_input("Target Mean",            value=0.78,  step=0.01,  format="%.4f")
+        sim_std   = st.number_input("Process Std Dev",         value=0.012, step=0.001, format="%.4f",
+                                    min_value=0.0001)
+        sim_shift = st.number_input("Assignable Cause Shift",  value=0.04,  step=0.005, format="%.4f",
+                                    min_value=0.0)
         st.divider()
         st.markdown("### 🔢 Sampling Plan")
         if chart_type == "X-bar & R Chart":

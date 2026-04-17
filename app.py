@@ -168,7 +168,7 @@ def render_tabs(df, sg, lim, all_vals, usl, lsl, n, chart_type, value_col, subti
               delta_color="normal" if cpk>=1.33 else "inverse")
     st.divider()
 
-    tab1, tab2, tab3 = st.tabs(["📈  Control Charts", "📊  Process Capability", "🗂️  Data Table"])
+    tab1, tab2, tab3, tab4 = st.tabs(["📈  Control Charts", "📊  Process Capability", "🗂️  Data Table", "📦  Box Plot"])
 
     # ── Tab 1 ──
     with tab1:
@@ -293,6 +293,113 @@ def render_tabs(df, sg, lim, all_vals, usl, lsl, n, chart_type, value_col, subti
         st.divider()
         st.markdown('<p class="section-header">Raw Data</p>', unsafe_allow_html=True)
         st.dataframe(df, hide_index=True, use_container_width=True, height=320)
+
+    # ── Tab 4: Box Plot ──
+    with tab4:
+        st.markdown('<p class="section-header">Box Plot by Subgroup</p>', unsafe_allow_html=True)
+
+        # Options row
+        col_opt1, col_opt2, col_opt3 = st.columns([1, 1, 2])
+        with col_opt1:
+            show_points = st.checkbox("Show individual points", value=True)
+        with col_opt2:
+            show_mean = st.checkbox("Show subgroup mean", value=True)
+        with col_opt3:
+            max_sg_display = st.slider("Max subgroups to display", 10, min(60, len(batches)), min(40, len(batches)), 5)
+
+        # Subset batches for readability
+        display_batches = batches[:max_sg_display]
+        batch_data = [df.loc[df["Subgroup"] == b, "Value"].values for b in display_batches]
+
+        # Colour each box: red if OOC, blue otherwise
+        ooc_set = set(lim["ooc_x"]) | set(lim["ooc_v"])
+        box_colors = [P["red"] if b in ooc_set else P["blue"] for b in display_batches]
+
+        # Dynamic figure width
+        fig_w = max(12, len(display_batches) * 0.45)
+        fig3, ax = plt.subplots(figsize=(fig_w, 5), tight_layout=True)
+        fig3.patch.set_facecolor("#ffffff")
+        ax.set_facecolor("#f8f9fb")
+        ax.spines[["top", "right"]].set_visible(False)
+        ax.spines[["left", "bottom"]].set_color("#cbd5e1")
+
+        bp = ax.boxplot(
+            batch_data,
+            positions=display_batches,
+            widths=0.6,
+            patch_artist=True,
+            medianprops=dict(color="#ffffff", linewidth=2),
+            whiskerprops=dict(color="#94a3b8", linewidth=1.2),
+            capprops=dict(color="#94a3b8", linewidth=1.2),
+            flierprops=dict(marker="o", markersize=3,
+                            markerfacecolor=P["amber"], markeredgecolor="none", alpha=0.7),
+        )
+
+        for patch, color in zip(bp["boxes"], box_colors):
+            patch.set_facecolor(color)
+            patch.set_alpha(0.65)
+
+        # Individual points (jitter)
+        if show_points:
+            for b, data in zip(display_batches, batch_data):
+                jitter = np.random.uniform(-0.18, 0.18, size=len(data))
+                ax.scatter(b + jitter, data, s=18, color=P["slate"],
+                           alpha=0.45, zorder=3, linewidths=0)
+
+        # Subgroup means
+        if show_mean:
+            means = [d.mean() for d in batch_data]
+            ax.plot(display_batches, means, "D", color=P["amber"],
+                    markersize=5, zorder=5, label="Subgroup mean")
+
+        # Grand mean & spec lines
+        ax.axhline(xbar_bar, color=P["blue"],  linewidth=1.2, linestyle="--",
+                   label=f"Grand mean = {xbar_bar:.3f}")
+        ax.axhline(usl, color=P["red"],  linewidth=1.4, linestyle="--", label=f"USL = {usl:.3f}")
+        ax.axhline(lsl, color=P["red"],  linewidth=1.4, linestyle="--", label=f"LSL = {lsl:.3f}")
+
+        # Shade OOC boxes lightly
+        for b in display_batches:
+            if b in ooc_set:
+                ax.axvspan(b - 0.4, b + 0.4, color=P["red"], alpha=0.06, zorder=0)
+
+        ax.set_xlabel("Subgroup Number", fontsize=10, color="#475569")
+        ax.set_ylabel(value_col, fontsize=10, color="#475569")
+        ax.set_title(
+            f"Box Plot by Subgroup  |  n={n}  |  Red = OOC subgroup",
+            fontsize=11, fontweight="bold", color="#1e293b"
+        )
+        ax.set_xticks(display_batches)
+        ax.set_xticklabels(display_batches, fontsize=7 if len(display_batches) > 30 else 9)
+        ax.tick_params(colors="#475569")
+        ax.legend(fontsize=8, loc="upper right", framealpha=0.8, edgecolor="#e2e8f0")
+        ax.grid(axis="y", linestyle=":", alpha=0.4, color="#94a3b8")
+
+        st.pyplot(fig3, use_container_width=True)
+
+        # Summary stats per subgroup
+        with st.expander("View subgroup summary statistics"):
+            summary = pd.DataFrame({
+                "Subgroup": display_batches,
+                "Min":    [d.min() for d in batch_data],
+                "Q1":     [float(np.percentile(d, 25)) for d in batch_data],
+                "Median": [float(np.median(d)) for d in batch_data],
+                "Mean":   [d.mean() for d in batch_data],
+                "Q3":     [float(np.percentile(d, 75)) for d in batch_data],
+                "Max":    [d.max() for d in batch_data],
+                "Std Dev":[d.std() for d in batch_data],
+                "Status": ["OOC" if b in ooc_set else "OK" for b in display_batches],
+            }).round(4)
+            st.dataframe(summary, hide_index=True, use_container_width=True)
+
+            csv_box = summary.to_csv(index=False).encode("utf-8")
+            st.download_button("⬇️  Download Box Plot Stats (CSV)", csv_box,
+                               file_name="boxplot_stats.csv", mime="text/csv")
+
+        buf3 = io.BytesIO()
+        fig3.savefig(buf3, format="png", dpi=150, bbox_inches="tight")
+        st.download_button("⬇️  Download Box Plot (PNG)", buf3.getvalue(),
+                           file_name="boxplot.png", mime="image/png")
 
 
 # ════════════════════════════════════════════════════════════════
